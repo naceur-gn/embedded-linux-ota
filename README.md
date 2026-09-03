@@ -39,108 +39,263 @@ This system provides:
 
 ## Architecture
 
-### Network Architecture
+### CORRECT ARCHITECTURE — TASKS 1–10
 
+```text
+                         OTA UPDATE SERVER
+                    ┌─────────────────────────┐
+                    │                         │
+                    │   Release Repository    │
+                    │                         │
+                    │   ├── image.bin         │
+                    │   ├── metadata.json     │
+                    │   └── signature         │
+                    │                         │
+                    │   Update API            │
+                    │   Image Download API    │
+                    │                         │
+                    └────────────┬────────────┘
+                                 │
+                                 │ HTTPS
+                                 │
+                                 │
+                                 ▼
+┌───────────────────────────────────────────────────────────────┐
+│                    EMBEDDED LINUX DEVICE                     │
+│                                                               │
+│  ┌─────────────────────────────────────────────────────────┐  │
+│  │                      OTA CLIENT                          │  │
+│  │                                                         │  │
+│  │  ┌─────────────────────┐                                │  │
+│  │  │   Update Manager    │                                │  │
+│  │  └──────────┬──────────┘                                │  │
+│  │             │                                           │  │
+│  │             ▼                                           │  │
+│  │  ┌─────────────────────┐                                │  │
+│  │  │ Communication Layer │                                │  │
+│  │  │      HTTPS/TLS      │                                │  │
+│  │  └──────────┬──────────┘                                │  │
+│  │             │                                           │  │
+│  │             ▼                                           │  │
+│  │  ┌─────────────────────┐                                │  │
+│  │  │ Download Manager    │                                │  │
+│  │  └──────────┬──────────┘                                │  │
+│  │             │                                           │  │
+│  │             ▼                                           │  │
+│  │       Download Storage                                 │  │
+│  │       /var/lib/ota/downloads/                          │  │
+│  │             │                                           │  │
+│  │             ▼                                           │  │
+│  │  ┌─────────────────────┐                                │  │
+│  │  │ SHA-256 Verification│                                │  │
+│  │  │    Integrity Check  │                                │  │
+│  │  └──────────┬──────────┘                                │  │
+│  │             │                                           │  │
+│  │             ▼                                           │  │
+│  │  ┌─────────────────────┐                                │  │
+│  │  │ Signature           │                                │  │
+│  │  │ Verification        │                                │  │
+│  │  │ Authenticity Check  │                                │  │
+│  │  └──────────┬──────────┘                                │  │
+│  │             │                                           │  │
+│  │             ▼                                           │  │
+│  │  ┌─────────────────────┐                                │  │
+│  │  │ Update Installer    │                                │  │
+│  │  └──────────┬──────────┘                                │  │
+│  │             │                                           │  │
+│  │             ▼                                           │  │
+│  │  ┌─────────────────────┐                                │  │
+│  │  │ Transaction / State │                                │  │
+│  │  │ Manager             │                                │  │
+│  │  └──────────┬──────────┘                                │  │
+│  │             │                                           │  │
+│  │             ▼                                           │  │
+│  │  ┌─────────────────────────────────────────────────┐    │  │
+│  │  │                 A/B SLOT MANAGER                │    │  │
+│  │  │                                                 │    │  │
+│  │  │       ┌─────────────┐   ┌─────────────┐         │    │  │
+│  │  │       │   SLOT A    │   │   SLOT B    │         │    │  │
+│  │  │       │             │   │             │         │    │  │
+│  │  │       │   System A  │   │   System B  │         │    │  │
+│  │  │       └─────────────┘   └─────────────┘         │    │  │
+│  │  └───────────────────────┬─────────────────────────┘    │  │
+│  │                          │                              │  │
+│  │                          ▼                              │  │
+│  │               ┌─────────────────────┐                  │  │
+│  │               │    BOOT CONTROL     │                  │  │
+│  │               │                     │                  │  │
+│  │               │ Simulated Backend   │                  │  │
+│  │               │                     │                  │  │
+│  │               │ Current Slot        │                  │  │
+│  │               │ Next Boot Slot      │                  │  │
+│  │               │ Boot Attempts       │                  │  │
+│  │               └─────────────────────┘                  │  │
+│  │                                                         │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│                                                               │
+│  Persistent Data                                               │
+│  ├── /var/lib/ota/state/                                      │
+│  ├── /var/lib/ota/downloads/                                 │
+│  ├── /var/lib/ota/staging/                                   │
+│  ├── /var/lib/ota/slots/                                     │
+│  └── /var/lib/ota/boot/                                      │
+│                                                               │
+└───────────────────────────────────────────────────────────────┘
 ```
-┌─────────────────────────────────────────────┐
-│           EMBEDDED LINUX DEVICE             │
-│                                             │
-│  ┌───────────────────────────────────────┐  │
-│  │              OTA CLIENT               │  │
-│  │                                       │  │
-│  │  Update Manager                       │  │
-│  │       │                               │  │
-│  │       ▼                               │  │
-│  │  HTTPS Transport                      │  │
-│  │       │                               │  │
-│  │       ▼                               │  │
-│  │  Download Manager                     │  │
-│  └───────────────┬───────────────────────┘  │
-│                  │                          │
-│                  ▼                          │
-│        /var/lib/ota/downloads/              │
-└──────────────────┼──────────────────────────┘
-                   │
-                  HTTPS
-                   │
-                   ▼
-          ┌──────────────────┐
-          │    OTA SERVER    │
-          │                  │
-          │ Update API       │
-          │ Image API        │
-          └──────────────────┘
-```
 
-The device initiates all communication with the server. The server responds to requests.
+### IMPORTANT COMMUNICATION DIRECTION
 
-### Internal Device Architecture
+The diagram MUST clearly show that the **Embedded Linux device is the OTA client**.
 
-```
+The device initiates communication:
+
+```text
 Embedded Linux Device
-│
-└── OTA Client
+        │
+        │ HTTPS request
+        ▼
+    OTA Server
+        │
+        │ HTTPS response
+        ▼
+Embedded Linux Device
+```
+
+For example:
+
+```text
+DEVICE ────── check for update ──────► SERVER
+DEVICE ◄───── update metadata ─────── SERVER
+
+DEVICE ────── download request ──────► SERVER
+DEVICE ◄──────── image.bin ─────────── SERVER
+```
+
+Do NOT draw the architecture as:
+
+```text
+SERVER ───── HTTP ─────► DEVICE
+```
+
+because that incorrectly suggests that the OTA server directly initiates the update.
+
+The OTA client on the Embedded Linux device controls the OTA process.
+
+---
+
+## TASK 10 LIMITATION
+
+The diagram MUST stop at the functionality that actually exists after Task 10.
+
+Do NOT include these as implemented:
+
+* real bootloader
+* U-Boot integration
+* GRUB integration
+* real reboot
+* first-boot detection
+* health-check system
+* boot confirmation
+* automatic rollback
+
+Those belong to later tasks.
+
+Task 10 only provides:
+
+```text
+A/B Slot Manager
+        │
+        ▼
+Boot Control API
+        │
+        ▼
+Simulated Boot Backend
+```
+
+The boot-control layer is an abstraction for future real bootloader integration.
+
+---
+
+## IMPORTANT ARCHITECTURE DISTINCTION
+
+Keep the two levels clear.
+
+### Network architecture
+
+```text
+┌─────────────────────┐
+│ Embedded Linux      │
+│ OTA Client          │
+└──────────┬──────────┘
+           │
+           │ HTTPS
+           ▼
+┌─────────────────────┐
+│ OTA Server          │
+│                     │
+│ Release Repository  │
+│ Update API          │
+│ Image API           │
+└─────────────────────┘
+```
+
+### Internal device architecture
+
+```text
+OTA Client
     │
     ├── Update Manager
-    │
-    ├── Communication / Download
-    │
-    ├── Integrity Verification
-    │      └── SHA-256
-    │
+    ├── Communication Layer
+    ├── Download Manager
+    ├── SHA-256 Verification
     ├── Signature Verification
-    │      └── Digital Signature (ECDSA P-256)
-    │
     ├── Update Installer
-    │      └── Staging + Atomic Finalization
-    │
-    ├── Transaction Manager
-    │      └── State Machine + Persistence
-    │
+    ├── Transaction / State Manager
     ├── A/B Slot Manager
-    │      ├── Slot A (filesystem-backed)
-    │      └── Slot B (filesystem-backed)
+    │       ├── Slot A
+    │       └── Slot B
     │
     └── Boot Control
-           └── Simulated Boot Backend
+            └── Simulated Backend
 ```
 
-### OTA Lifecycle (Tasks 1–10)
+Both diagrams may be included in the README if useful.
 
-```
-START
-  │
-  ▼
-Check for update ──────(no update)──────► END
-  │
-  ▼ (update available)
-Download update
-  │
-  ▼
-SHA-256 integrity verification
-  │
-  ▼
-Digital signature verification
-  │
-  ▼
-Compatibility validation
-  │
-  ▼
-Install to inactive slot
-  │
-  ▼
-Prepare target slot
-  │
-  ▼
-Prepare next boot
-  │
-  ▼
-READY FOR REBOOT (simulated)
-```
+---
 
-**Note:** Real reboot, health checks, and rollback are NOT implemented yet. See "What Is NOT Implemented Yet" above.
+## README QUALITY REQUIREMENTS
 
-## Project Structure
+Make the diagram:
+
+* technically accurate
+* clean
+* professional
+* easy to understand
+* suitable for a GitHub embedded-systems project
+* consistent with Tasks 1–10
+* consistent with the actual source code
+
+Do not add components merely to make the architecture look more advanced.
+
+Do not introduce:
+
+* Docker
+* Kubernetes
+* cloud infrastructure
+* databases
+* AI
+* microservices
+* unnecessary networking components
+
+unless they actually exist in the implementation.
+
+After updating the README, verify the diagram against the source code and Task 1–10 documentation.
+
+Do not modify implementation code.
+
+Do not start Task 11.
+
+Stop after fixing and validating the README architecture diagram.
 
 ```
 ├── src/
