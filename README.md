@@ -11,13 +11,35 @@ This system provides:
 - Transaction management with atomic state persistence
 - Concurrency protection via file locking
 - Crash recovery detection
-- A/B slot architecture for safe updates
+- A/B slot architecture for safe updates (filesystem-backed simulation)
 - Slot validation and integrity checking
-- Boot control abstraction layer
-- Simulated bootloader backend
+- Boot control abstraction layer (simulated backend)
 - Persistent state management
 
+### What Is Implemented (Tasks 1–10)
+
+- Device foundation (configuration, state, logging, systemd service)
+- OTA server (Python HTTP server, release management)
+- OTA client communication (HTTP/HTTPS transport, download, update manager)
+- SHA-256 integrity verification
+- Digital signature verification (ECDSA P-256)
+- Secure installation (staging, atomic finalization)
+- Transaction management (state machine, persistence, history)
+- A/B slot management (filesystem-backed slots)
+- Boot control abstraction (simulated backend)
+
+### What Is NOT Implemented Yet
+
+- Real bootloader integration (U-Boot, GRUB, systemd-boot)
+- Real reboot execution
+- Health checks after boot
+- Automatic rollback on failure
+- Boot confirmation
+- Real embedded storage (eMMC/NAND/SD partitions)
+
 ## Architecture
+
+### Network Architecture
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -39,7 +61,7 @@ This system provides:
 │        /var/lib/ota/downloads/              │
 └──────────────────┼──────────────────────────┘
                    │
-                  HTTP
+                  HTTPS
                    │
                    ▼
           ┌──────────────────┐
@@ -49,6 +71,74 @@ This system provides:
           │ Image API        │
           └──────────────────┘
 ```
+
+The device initiates all communication with the server. The server responds to requests.
+
+### Internal Device Architecture
+
+```
+Embedded Linux Device
+│
+└── OTA Client
+    │
+    ├── Update Manager
+    │
+    ├── Communication / Download
+    │
+    ├── Integrity Verification
+    │      └── SHA-256
+    │
+    ├── Signature Verification
+    │      └── Digital Signature (ECDSA P-256)
+    │
+    ├── Update Installer
+    │      └── Staging + Atomic Finalization
+    │
+    ├── Transaction Manager
+    │      └── State Machine + Persistence
+    │
+    ├── A/B Slot Manager
+    │      ├── Slot A (filesystem-backed)
+    │      └── Slot B (filesystem-backed)
+    │
+    └── Boot Control
+           └── Simulated Boot Backend
+```
+
+### OTA Lifecycle (Tasks 1–10)
+
+```
+START
+  │
+  ▼
+Check for update ──────(no update)──────► END
+  │
+  ▼ (update available)
+Download update
+  │
+  ▼
+SHA-256 integrity verification
+  │
+  ▼
+Digital signature verification
+  │
+  ▼
+Compatibility validation
+  │
+  ▼
+Install to inactive slot
+  │
+  ▼
+Prepare target slot
+  │
+  ▼
+Prepare next boot
+  │
+  ▼
+READY FOR REBOOT (simulated)
+```
+
+**Note:** Real reboot, health checks, and rollback are NOT implemented yet. See "What Is NOT Implemented Yet" above.
 
 ## Project Structure
 
