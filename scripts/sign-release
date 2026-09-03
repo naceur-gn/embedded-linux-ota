@@ -1,0 +1,243 @@
+#!/bin/bash
+#
+# OTA Release Signing Script
+#
+# Usage:
+#   ./sign-release <release_dir> [--key <private_key_path>]
+#
+# This script signs an OTA release by creating a digital signature
+# of the canonical metadata.
+#
+
+set -e
+
+# Default values
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+DEFAULT_KEY="$PROJECT_DIR/keys/development/private/ota-signing.key"
+
+# Parse arguments
+RELEASE_DIR=""
+PRIVATE_KEY="$DEFAULT_KEY"
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --key|-k)
+            PRIVATE_KEY="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "Usage: $0 <release_dir> [--key <private_key_path>]"
+            echo ""
+            echo "Arguments:"
+            echo "  release_dir          Path to release directory"
+            echo ""
+            echo "Options:"
+            echo "  --key, -k            Path to private key (default: $DEFAULT_KEY)"
+            echo "  --help, -h           Show this help message"
+            echo ""
+            echo "This script signs an OTA release by creating a digital signature"
+            echo "of the canonical metadata."
+            exit 0
+            ;;
+        *)
+            if [[ -z "$RELEASE_DIR" ]]; then
+                RELEASE_DIR="$1"
+            else
+                echo "ERROR: Unknown argument: $1"
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Validate arguments
+if [[ -z "$RELEASE_DIR" ]]; then
+    echo "ERROR: Release directory not specified"
+    echo "Usage: $0 <release_dir> [--key <private_key_path>]"
+    exit 1
+fi
+
+# Convert to absolute path
+if [[ ! "$RELEASE_DIR" = /* ]]; then
+    RELEASE_DIR="$(pwd)/$RELEASE_DIR"
+fi
+
+# Check if release directory exists
+if [[ ! -d "$RELEASE_DIR" ]]; then
+    echo "ERROR: Release directory not found: $RELEASE_DIR"
+    exit 1
+fi
+
+# Check for metadata.json
+METADATA_FILE="$RELEASE_DIR/metadata.json"
+if [[ ! -f "$METADATA_FILE" ]]; then
+    echo "ERROR: metadata.json not found in release directory"
+    exit 1
+fi
+
+# Check for private key
+if [[ ! -f "$PRIVATE_KEY" ]]; then
+    echo "ERROR: Private key not found: $PRIVATE_KEY"
+    echo "Generate a keypair with: ./scripts/generate-signing-key"
+    exit 1
+fi
+
+# Check if metadata already has signature
+EXISTING_SIG=$(python3 -c "import json; print(json.load(open('$METADATA_FILE')).get('signature', ''))" 2>/dev/null || echo "")
+if [[ -n "$EXISTING_SIG" ]]; then
+    echo "WARNING: Release already has a signature"
+    read -p "Re-sign? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 1
+    fi
+fi
+
+echo "Signing release: $RELEASE_DIR"
+echo "  Private key: $PRIVATE_KEY"
+echo ""
+
+# Step 1: Validate metadata
+echo "Step 1: Validating metadata..."
+python3 -c "
+import json
+import sys
+
+with open('$METADATA_FILE') as f:
+    metadata = json.load(f)
+
+required_fields = ['version', 'hardware_version', 'image', 'sha256', 'size']
+missing = [f for f in required_fields if f not in metadata]
+
+if missing:
+    print(f'ERROR: Missing required fields: {missing}', file=sys.stderr)
+    sys.exit(1)
+
+if not metadata['version']:
+    print('ERROR: Version is empty', file=sys.stderr)
+    sys.exit(1)
+
+if not metadata['sha256']:
+    print('ERROR: SHA-256 is empty', file=sys.stderr)
+    sys.exit(1)
+
+print('Metadata is valid')
+"
+
+if [[ $? -ne 0 ]]; then
+    echo "ERROR: Metadata validation failed"
+    exit 1
+fi
+
+# Step 2: Verify image exists and hash matches
+echo "Step 2: Verifying image integrity..."
+IMAGE_PATH="$RELEASE_DIR/$(python3 -c "import json; print(json.load(open('$METADATA_FILE'))['image'])")"
+EXPECTED_HASH=$(python3 -c "import json; print(json.load(open('$METADATA_FILE'))['sha256'])")
+
+if [[ ! -f "$IMAGE_PATH" ]]; then
+    echo "ERROR: Image file not found: $IMAGE_PATH"
+    exit 1
+fi
+
+ACTUAL_HASH=$(sha256sum "$IMAGE_PATH" | awk '{print $1}')
+if [[ "$ACTUAL_HASH" != "$EXPECTED_HASH" ]]; then
+    echo "ERROR: Image hash mismatch"
+    echo "  Expected: $EXPECTED_HASH"
+    echo "  Actual:   $ACTUAL_HASH"
+    exit 1
+fi
+
+echo "Image hash verified: $ACTUAL_HASH"
+
+# Step 3: Create canonical representation
+echo "Step 3: Creating canonical metadata..."
+CANONICAL_FILE=$(mktemp)
+trap "rm -f $CANONICAL_FILE" EXIT
+
+# Create canonical JSON (sorted keys, no extra whitespace)
+python3 -c "
+import json
+import sys
+
+with open('$METADATA_FILE') as f:
+    metadata = json.load(f)
+
+# Remove signature field for signing
+sign_data = {k: v for k, v in metadata.items() if k != 'signature'}
+
+# Canonical JSON: sorted keys, no whitespace, no trailing newline
+canonical = json.dumps(sign_data, sort_keys=True, separators=(',', ':'), ensure_ascii=True)
+
+# Write as raw bytes
+sys.stdout.buffer.write(canonical.encode('utf-8'))
+" > "$CANONICAL_FILE"
+
+echo "Canonical data:"
+cat "$CANONICAL_FILE"
+echo ""
+
+# Step 4: Sign the canonical data
+echo "Step 4: Signing metadata..."
+SIGNATURE_FILE="$RELEASE_DIR/metadata.sig"
+
+openssl dgst \
+    -sign "$PRIVATE_KEY" \
+    -sha256 \
+    -out "$SIGNATURE_FILE" \
+    "$CANONICAL_FILE"
+
+if [[ $? -ne 0 ]]; then
+    echo "ERROR: Signing failed"
+    rm -f "$SIGNATURE_FILE"
+    exit 1
+fi
+
+echo "Signature created: $SIGNATURE_FILE"
+
+# Step 5: Update metadata.json with signature
+echo "Step 5: Updating metadata.json..."
+SIGNATURE_B64=$(base64 -w 0 "$SIGNATURE_FILE" 2>/dev/null || base64 "$SIGNATURE_FILE" | tr -d '\n')
+
+python3 -c "
+import json
+
+with open('$METADATA_FILE') as f:
+    metadata = json.load(f)
+
+metadata['signature'] = '$SIGNATURE_B64'
+
+with open('$METADATA_FILE', 'w') as f:
+    json.dump(metadata, f, indent=2)
+"
+
+# Step 6: Verify the signature
+echo "Step 6: Verifying signature..."
+PUBLIC_KEY_PATH="$(cd "$(dirname "$PRIVATE_KEY")/../public" && pwd)/$(basename "$PRIVATE_KEY" | sed 's/\.key$/.pub/')"
+openssl dgst \
+    -verify "$PUBLIC_KEY_PATH" \
+    -sha256 \
+    -signature "$SIGNATURE_FILE" \
+    "$CANONICAL_FILE" > /dev/null 2>&1
+
+if [[ $? -eq 0 ]]; then
+    echo "Signature verification successful"
+else
+    echo "WARNING: Signature verification failed (key may not match)"
+fi
+
+# Step 7: Summary
+echo ""
+echo "=========================================="
+echo "Release signed successfully!"
+echo "=========================================="
+echo ""
+echo "Release directory: $RELEASE_DIR"
+echo "Signed files:"
+ls -la "$RELEASE_DIR/"
+echo ""
+echo "Signature (first 64 chars): ${SIGNATURE_B64:0:64}..."
+echo ""
+echo "To deploy this release, copy the release directory to the OTA server."

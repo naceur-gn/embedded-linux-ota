@@ -1,0 +1,114 @@
+#!/bin/bash
+#
+# OTA Signing Key Generation Script
+#
+# Usage:
+#   ./generate-signing-key [--environment development|production]
+#
+# This script generates an ECDSA P-256 keypair for signing OTA releases.
+#
+
+set -e
+
+# Default values
+ENVIRONMENT="development"
+KEYS_DIR="$(cd "$(dirname "$0")/.." && pwd)/keys"
+ALGORITHM="ec"
+CURVE="prime256v1"
+DIGEST="sha256"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --environment|-e)
+            ENVIRONMENT="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo "Usage: $0 [--environment development|production]"
+            echo ""
+            echo "Options:"
+            echo "  --environment, -e   Key environment (default: development)"
+            echo "  --help, -h          Show this help message"
+            echo ""
+            echo "This script generates an ECDSA P-256 keypair for signing OTA releases."
+            echo ""
+            echo "The private key is stored in: $KEYS_DIR/<environment>/private/"
+            echo "The public key is stored in:  $KEYS_DIR/<environment>/public/"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            exit 1
+            ;;
+    esac
+done
+
+# Validate environment
+if [[ "$ENVIRONMENT" != "development" && "$ENVIRONMENT" != "production" ]]; then
+    echo "ERROR: Invalid environment: $ENVIRONMENT"
+    echo "Must be 'development' or 'production'"
+    exit 1
+fi
+
+# Create directories
+PRIVATE_DIR="$KEYS_DIR/$ENVIRONMENT/private"
+PUBLIC_DIR="$KEYS_DIR/$ENVIRONMENT/public"
+mkdir -p "$PRIVATE_DIR" "$PUBLIC_DIR"
+
+# Key paths
+PRIVATE_KEY="$PRIVATE_DIR/ota-signing.key"
+PUBLIC_KEY="$PUBLIC_DIR/ota-signing.pub"
+
+# Check if keys already exist
+if [[ -f "$PRIVATE_KEY" ]]; then
+    echo "WARNING: Private key already exists at: $PRIVATE_KEY"
+    read -p "Overwrite? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 1
+    fi
+fi
+
+echo "Generating ECDSA P-256 keypair..."
+echo "  Curve: $CURVE"
+echo "  Environment: $ENVIRONMENT"
+echo ""
+
+# Generate private key
+echo "Generating private key..."
+openssl ecparam \
+    -genkey \
+    -name "$CURVE" \
+    -noout \
+    -out "$PRIVATE_KEY"
+
+# Set restrictive permissions on private key
+chmod 600 "$PRIVATE_KEY"
+
+echo "  Private key: $PRIVATE_KEY"
+
+# Extract public key
+echo "Extracting public key..."
+openssl ec \
+    -in "$PRIVATE_KEY" \
+    -pubout \
+    -out "$PUBLIC_KEY"
+
+# Public key can be world-readable
+chmod 644 "$PUBLIC_KEY"
+
+echo "  Public key:  $PUBLIC_KEY"
+
+echo ""
+echo "Key generation complete!"
+echo ""
+echo "IMPORTANT SECURITY NOTES:"
+echo "  1. Never commit the private key to Git"
+echo "  2. Never share the private key"
+echo "  3. Never store the private key on the device"
+echo "  4. For production, use a hardware security module (HSM)"
+echo ""
+echo "Key details:"
+openssl ec -in "$PRIVATE_KEY" -noout -text 2>/dev/null | head -3

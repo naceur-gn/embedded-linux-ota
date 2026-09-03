@@ -1,0 +1,21 @@
+[Unit]
+Description=OTA Client Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/ota/bin/ota-client
+Restart=on-failure
+RestartSec=5
+User=ota
+Group=ota
+ConfigurationDirectory=ota
+StateDirectory=ota
+LogsDirectory=ota
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
