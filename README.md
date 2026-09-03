@@ -51,7 +51,7 @@ This system provides:
 │  │  Update Manager                       │  │
 │  │       │                               │  │
 │  │       ▼                               │  │
-│  │  HTTP/HTTPS Transport                 │  │
+│  │  HTTPS Transport                      │  │
 │  │       │                               │  │
 │  │       ▼                               │  │
 │  │  Download Manager                     │  │
