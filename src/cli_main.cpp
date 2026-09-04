@@ -8,6 +8,7 @@
 #include "transaction/transaction_state_machine.h"
 #include "slot/slot_manager.h"
 #include "boot/simulated_boot_control.h"
+#include "boot/bootloader/simulated_bootloader.hpp"
 #include "logging/logger.h"
 #include <iostream>
 #include <iomanip>
@@ -42,6 +43,11 @@ void print_usage(const char* prog) {
               << "  boot set <slot>   Set next boot slot (A or B)\n"
               << "  boot clear        Clear pending next boot selection\n"
               << "  boot simulate     Simulate one boot cycle\n"
+              << "  bootloader status      Show bootloader state\n"
+              << "  bootloader set-next    Set next boot slot via bootloader\n"
+              << "  bootloader clear-next  Clear pending boot via bootloader\n"
+              << "  bootloader simulate    Simulate boot via bootloader\n"
+              << "  bootloader attempts    Show boot attempt counts\n"
               << "\nOptions:\n"
               << "  -c, --config PATH        Path to device config (default: " << DEFAULT_CONFIG_PATH << ")\n"
               << "  -s, --state-dir PATH     Path to state directory (default: " << DEFAULT_STATE_DIR << ")\n"
@@ -634,6 +640,98 @@ int main(int argc, char* argv[]) {
         } else {
             std::cerr << "Unknown boot subcommand: " << subcommand << "\n";
             std::cerr << "Valid subcommands: status, set, clear, simulate\n";
+            return 1;
+        }
+
+    } else if (command == "bootloader") {
+        std::string subcommand = "status";
+        std::string slot_arg;
+        if (argc > 2) {
+            subcommand = argv[2];
+        }
+        if ((subcommand == "set-next") && argc > 3) {
+            slot_arg = argv[3];
+        }
+
+        std::shared_ptr<ota::SimulatedBootloader> bootloader = std::make_shared<ota::SimulatedBootloader>();
+        bootloader->set_state_dir(state_dir + "/bootloader", state_dir + "/bootloader/bootloader_state.json");
+
+        if (!bootloader->initialize()) {
+            std::cerr << "Error: Failed to initialize bootloader\n";
+            return 1;
+        }
+
+        if (subcommand == "status") {
+            ota::BootloaderState bl_state = bootloader->get_state();
+            std::cout << "\nBootloader Status\n\n";
+            std::cout << "Current slot     : " << ota::slot_id_to_string(bl_state.current_slot) << "\n";
+            std::cout << "Next boot slot   : " << (bl_state.next_boot_slot_set ? ota::slot_id_to_string(bl_state.next_boot_slot) : "none") << "\n";
+            std::cout << "Pending boot     : " << (bl_state.next_boot_slot_set ? "YES" : "NO") << "\n\n";
+            std::cout << "Boot attempts:\n";
+            std::cout << "  A: " << bl_state.boot_attempts_a << "\n";
+            std::cout << "  B: " << bl_state.boot_attempts_b << "\n\n";
+
+        } else if (subcommand == "set-next") {
+            if (slot_arg.empty()) {
+                std::cerr << "Error: bootloader set-next requires a slot argument (A or B)\n";
+                return 1;
+            }
+
+            ota::SlotId target_slot;
+            if (slot_arg == "A" || slot_arg == "a") {
+                target_slot = ota::SlotId::SLOT_A;
+            } else if (slot_arg == "B" || slot_arg == "b") {
+                target_slot = ota::SlotId::SLOT_B;
+            } else {
+                std::cerr << "Error: Invalid slot: " << slot_arg << "\n";
+                std::cerr << "Valid slots: A, B\n";
+                return 1;
+            }
+
+            if (!bootloader->set_next_boot_slot(target_slot)) {
+                std::cerr << "Error: Failed to set next boot slot\n";
+                std::cerr << "Error code: " << ota::bootloader_error_to_string(bootloader->get_last_error()) << "\n";
+                return 1;
+            }
+
+            std::cout << "Next boot slot set to: " << slot_arg << "\n";
+
+        } else if (subcommand == "clear-next") {
+            if (!bootloader->clear_next_boot_slot()) {
+                std::cerr << "Error: Failed to clear next boot slot\n";
+                std::cerr << "Error code: " << ota::bootloader_error_to_string(bootloader->get_last_error()) << "\n";
+                return 1;
+            }
+            std::cout << "Next boot selection cleared\n";
+
+        } else if (subcommand == "simulate") {
+            if (!bootloader->has_pending_boot_slot()) {
+                std::cerr << "Error: No pending boot slot set\n";
+                std::cerr << "Use 'bootloader set-next <slot>' to set a boot target first\n";
+                return 1;
+            }
+
+            ota::SlotId target = bootloader->get_next_boot_slot();
+            if (!bootloader->mark_boot_started(target)) {
+                std::cerr << "Error: Failed to simulate boot\n";
+                std::cerr << "Error code: " << ota::bootloader_error_to_string(bootloader->get_last_error()) << "\n";
+                return 1;
+            }
+
+            ota::BootloaderState bl_state = bootloader->get_state();
+            std::cout << "Boot simulated successfully\n";
+            std::cout << "Current slot: " << ota::slot_id_to_string(bl_state.current_slot) << "\n";
+            std::cout << "Boot attempts for current slot: " << (bl_state.current_slot == ota::SlotId::SLOT_A ? bl_state.boot_attempts_a : bl_state.boot_attempts_b) << "\n";
+
+        } else if (subcommand == "attempts") {
+            ota::BootloaderState bl_state = bootloader->get_state();
+            std::cout << "\nBoot Attempt Counts\n\n";
+            std::cout << "Slot A: " << bl_state.boot_attempts_a << "\n";
+            std::cout << "Slot B: " << bl_state.boot_attempts_b << "\n\n";
+
+        } else {
+            std::cerr << "Unknown bootloader subcommand: " << subcommand << "\n";
+            std::cerr << "Valid subcommands: status, set-next, clear-next, simulate, attempts\n";
             return 1;
         }
 

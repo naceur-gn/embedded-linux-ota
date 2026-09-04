@@ -33,6 +33,10 @@ add_executable(ota_tests
     test_boot_control.cpp
     test_boot_integration.cpp
     test_boot_failure_injection.cpp
+    test_bootloader.cpp
+    test_bootloader_persistence.cpp
+    test_bootloader_failure_injection.cpp
+    test_bootloader_integration.cpp
 )
 
 target_link_libraries(ota_tests PRIVATE ota_core GTest::GTest GTest::Main)

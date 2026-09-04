@@ -21,6 +21,14 @@ void SimulatedBootControl::set_config(const SimulatedBootConfig& config) {
     config_ = config;
 }
 
+void SimulatedBootControl::set_bootloader(std::shared_ptr<Bootloader> bootloader) {
+    bootloader_ = bootloader;
+}
+
+std::shared_ptr<Bootloader> SimulatedBootControl::get_bootloader() const {
+    return bootloader_;
+}
+
 bool SimulatedBootControl::initialize() {
     if (config_.boot_state_dir.empty()) {
         config_ = get_default_config();
@@ -28,6 +36,25 @@ bool SimulatedBootControl::initialize() {
 
     if (!ensure_directory_exists(config_.boot_state_dir)) {
         return false;
+    }
+
+    if (bootloader_) {
+        std::string bl_state_dir = config_.boot_state_dir + "/bootloader";
+        std::string bl_state_file = config_.boot_state_dir + "/bootloader/bootloader_state.json";
+        bootloader_->set_state_dir(bl_state_dir, bl_state_file);
+
+        if (!bootloader_->initialize()) {
+            return false;
+        }
+
+        BootloaderState bl_state = bootloader_->get_state();
+        current_slot_ = bl_state.current_slot;
+        next_slot_ = bl_state.next_boot_slot;
+        next_slot_set_ = bl_state.next_boot_slot_set;
+        boot_attempts_[SlotId::SLOT_A] = bl_state.boot_attempts_a;
+        boot_attempts_[SlotId::SLOT_B] = bl_state.boot_attempts_b;
+
+        return true;
     }
 
     return load_boot_state();
@@ -56,11 +83,23 @@ bool SimulatedBootControl::set_next_boot_slot(SlotId slot) {
     next_slot_ = slot;
     next_slot_set_ = true;
 
+    if (bootloader_) {
+        if (!bootloader_->set_next_boot_slot(slot)) {
+            return false;
+        }
+    }
+
     return persist_boot_state();
 }
 
 bool SimulatedBootControl::clear_next_boot_slot() {
     next_slot_set_ = false;
+
+    if (bootloader_) {
+        if (!bootloader_->clear_next_boot_slot()) {
+            return false;
+        }
+    }
 
     return persist_boot_state();
 }
@@ -89,6 +128,21 @@ bool SimulatedBootControl::simulate_boot() {
     }
 
     SlotId target = next_slot_;
+
+    if (bootloader_) {
+        if (!bootloader_->mark_boot_started(target)) {
+            return false;
+        }
+
+        BootloaderState bl_state = bootloader_->get_state();
+        current_slot_ = bl_state.current_slot;
+        next_slot_set_ = bl_state.next_boot_slot_set;
+        boot_attempts_[SlotId::SLOT_A] = bl_state.boot_attempts_a;
+        boot_attempts_[SlotId::SLOT_B] = bl_state.boot_attempts_b;
+
+        return persist_boot_state();
+    }
+
     current_slot_ = target;
     next_slot_set_ = false;
     boot_attempts_[target]++;

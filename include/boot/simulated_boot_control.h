@@ -1,9 +1,12 @@
 #pragma once
 
 #include "boot/boot_control.h"
+#include "boot/bootloader/bootloader.hpp"
+#include "boot/bootloader/simulated_bootloader.hpp"
 #include "logging/logger.h"
 #include <string>
 #include <map>
+#include <memory>
 
 namespace ota {
 
@@ -18,6 +21,10 @@ public:
     ~SimulatedBootControl() override;
 
     void set_config(const SimulatedBootConfig& config);
+
+    void set_bootloader(std::shared_ptr<Bootloader> bootloader);
+
+    std::shared_ptr<Bootloader> get_bootloader() const;
 
     bool initialize() override;
 
@@ -67,6 +74,7 @@ private:
     SlotId next_slot_;
     std::map<SlotId, int> boot_attempts_;
     bool next_slot_set_;
+    std::shared_ptr<Bootloader> bootloader_;
 };
 
 }

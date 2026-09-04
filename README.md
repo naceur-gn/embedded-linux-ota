@@ -16,7 +16,7 @@ This system provides:
 - Boot control abstraction layer (simulated backend)
 - Persistent state management
 
-### What Is Implemented (Tasks 1–10)
+### What Is Implemented (Tasks 1–11)
 
 - Device foundation (configuration, state, logging, systemd service)
 - OTA server (Python HTTP server, release management)
@@ -27,6 +27,7 @@ This system provides:
 - Transaction management (state machine, persistence, history)
 - A/B slot management (filesystem-backed slots)
 - Boot control abstraction (simulated backend)
+- Bootloader interface abstraction (simulated bootloader)
 
 ### What Is NOT Implemented Yet
 
@@ -39,7 +40,7 @@ This system provides:
 
 ## Architecture
 
-### CORRECT ARCHITECTURE — TASKS 1–10
+### CORRECT ARCHITECTURE — TASKS 1–11
 
 ```text
                          OTA UPDATE SERVER
@@ -124,11 +125,30 @@ This system provides:
 │  │               ┌─────────────────────┐                  │  │
 │  │               │    BOOT CONTROL     │                  │  │
 │  │               │                     │                  │  │
-│  │               │ Simulated Backend   │                  │  │
-│  │               │                     │                  │  │
 │  │               │ Current Slot        │                  │  │
 │  │               │ Next Boot Slot      │                  │  │
 │  │               │ Boot Attempts       │                  │  │
+│  │               └──────────┬──────────┘                  │  │
+│  │                          │                              │  │
+│  │                          ▼                              │  │
+│  │               ┌─────────────────────┐                  │  │
+│  │               │ BOOTLOADER INTERFACE │                  │  │
+│  │               │                     │                  │  │
+│  │               │ get_current_slot()  │                  │  │
+│  │               │ set_next_boot_slot()│                  │  │
+│  │               │ mark_boot_started() │                  │  │
+│  │               │ boot_attempts       │                  │  │
+│  │               └──────────┬──────────┘                  │  │
+│  │                          │                              │  │
+│  │                          ▼                              │  │
+│  │               ┌─────────────────────┐                  │  │
+│  │               │ SIMULATED BOOTLOADER │                  │  │
+│  │               │                     │                  │  │
+│  │               │ Filesystem-backed   │                  │  │
+│  │               │ JSON persistence    │                  │  │
+│  │               │ Atomic writes       │                  │  │
+│  │               │                     │                  │  │
+│  │               │ CURRENT IMPLEMENTATION                │  │
 │  │               └─────────────────────┘                  │  │
 │  │                                                         │  │
 │  └─────────────────────────────────────────────────────────┘  │
@@ -138,7 +158,8 @@ This system provides:
 │  ├── /var/lib/ota/downloads/                                 │
 │  ├── /var/lib/ota/staging/                                   │
 │  ├── /var/lib/ota/slots/                                     │
-│  └── /var/lib/ota/boot/                                      │
+│  ├── /var/lib/ota/boot/                                      │
+│  └── /var/lib/ota/bootloader/                                │
 │                                                               │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -183,9 +204,9 @@ The OTA client on the Embedded Linux device controls the OTA process.
 
 ---
 
-## TASK 10 LIMITATION
+## TASK 11 LIMITATION
 
-The diagram MUST stop at the functionality that actually exists after Task 10.
+The diagram MUST stop at the functionality that actually exists after Task 11.
 
 Do NOT include these as implemented:
 
@@ -200,7 +221,7 @@ Do NOT include these as implemented:
 
 Those belong to later tasks.
 
-Task 10 only provides:
+Task 11 provides:
 
 ```text
 A/B Slot Manager
@@ -209,10 +230,14 @@ A/B Slot Manager
 Boot Control API
         │
         ▼
-Simulated Boot Backend
+Bootloader Interface
+        │
+        ▼
+Simulated Bootloader
 ```
 
-The boot-control layer is an abstraction for future real bootloader integration.
+CURRENT IMPLEMENTATION → Simulated Bootloader
+FUTURE → Real U-Boot / GRUB integration
 
 ---
 
@@ -255,8 +280,12 @@ OTA Client
     │       ├── Slot A
     │       └── Slot B
     │
-    └── Boot Control
-            └── Simulated Backend
+    ├── Boot Control
+    │       └── (uses Bootloader Interface)
+    │
+    └── Bootloader Interface
+            └── Simulated Bootloader (CURRENT)
+            └── Real U-Boot / GRUB (FUTURE)
 ```
 
 Both diagrams may be included in the README if useful.
@@ -310,6 +339,9 @@ Stop after fixing and validating the README architecture diagram.
 │   ├── transaction/         # Transaction management
 │   ├── slot/                # A/B slot management
 │   ├── boot/                # Boot control abstraction
+│   │   ├── simulated_boot_control.cpp
+│   │   └── bootloader/      # Bootloader interface
+│   │       └── simulated_bootloader.cpp
 │   └── main.cpp             # Client entry point
 ├── include/
 │   ├── client/
@@ -323,6 +355,11 @@ Stop after fixing and validating the README architecture diagram.
 │   ├── transaction/
 │   ├── slot/
 │   └── boot/
+│       ├── boot_control.h
+│       ├── simulated_boot_control.h
+│       └── bootloader/      # Bootloader interface
+│           ├── bootloader.hpp
+│           └── simulated_bootloader.hpp
 ├── tests/                   # Unit and integration tests
 ├── ota-server/              # OTA server
 ├── configs/                 # Configuration files
@@ -346,7 +383,7 @@ cmake --build .
 ### Test Client
 
 ```bash
-./build/tests/ota_tests  # 304 tests
+./build/tests/ota_tests  # 368 tests
 ```
 
 ### Run Client
@@ -390,6 +427,21 @@ cmake --build .
 
 # Simulate boot cycle
 ./build/ota-cli boot simulate
+
+# View bootloader status
+./build/ota-cli bootloader status
+
+# Set next boot via bootloader
+./build/ota-cli bootloader set-next B
+
+# Clear pending boot via bootloader
+./build/ota-cli bootloader clear-next
+
+# Simulate boot via bootloader
+./build/ota-cli bootloader simulate
+
+# View boot attempt counts
+./build/ota-cli bootloader attempts
 ```
 
 ### OTA Server
@@ -450,6 +502,7 @@ sudo systemctl start ota-client
 - [Transaction Management](docs/transaction-management.md) - OTA transaction lifecycle
 - [A/B Slot Architecture](docs/ab-slot-architecture.md) - A/B slot management
 - [Boot Control Abstraction](docs/boot-control.md) - Boot control abstraction layer
+- [Bootloader Integration](docs/bootloader-integration.md) - Bootloader interface and simulated bootloader
 - [Testing - Task 02](docs/testing/task-02.md) - Client test results
 - [Testing - Task 03](docs/testing/task-03.md) - Server test results
 - [Testing - Task 04](docs/testing/task-04.md) - Communication layer test results
@@ -459,6 +512,7 @@ sudo systemctl start ota-client
 - [Testing - Task 08](docs/testing/task-08.md) - Transaction management test results
 - [Testing - Task 09](docs/testing/task-09.md) - A/B slot architecture test results
 - [Testing - Task 10](docs/testing/task-10.md) - Boot control test results
+- [Testing - Task 11](docs/testing/task-11.md) - Bootloader interface test results
 - [Difficulties](docs/difficulties.md) - Implementation challenges
 
 ## Technology Stack

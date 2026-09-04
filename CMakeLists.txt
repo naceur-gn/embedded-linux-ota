@@ -27,6 +27,7 @@ add_library(ota_core STATIC
     src/transaction/transaction_manager.cpp
     src/slot/slot_manager.cpp
     src/boot/simulated_boot_control.cpp
+    src/boot/bootloader/simulated_bootloader.cpp
 )
 
 target_include_directories(ota_core PUBLIC
